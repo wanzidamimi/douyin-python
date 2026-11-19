@@ -1,3 +1,5 @@
+![Uploading image.png…]()
+
 # douyin_python —— 抖音弹幕纯协议直连（研究版）
 
 按 `jd-captcha-reverse` skill 的手法实现：**官方运行时在 Node 补环境里执行，Python 侧用 curl_cffi 复刻 Chrome TLS 指纹直连接口**，不逆向签名算法本身。
