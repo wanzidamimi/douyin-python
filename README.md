@@ -1,4 +1,4 @@
-![Uploading image.png…]()
+
 
 # douyin_python —— 抖音弹幕纯协议直连（研究版）
 
