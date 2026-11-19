@@ -1,0 +1,39 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 真实会话凭据 / 抓包产物（本地调试用，禁止上传）
+_real_cookies.json
+_real_localstorage.json
+_raw_ws_capture.json
+
+# 依赖真机 cookie 或含抓包签名的一次性实验脚本
+test_bind.py
+test_bind2.py
+test_cookie_ws.py
+test_e2e_stripped.py
+test_exact_ws.py
+test_full_stack.py
+test_ls_bind.py
+test_project_sign.py
+test_ttwid_bind.py
+
+# 采集到的用户弹幕数据（含个人信息）
+exports/
+
+# 上游仓库自带内容
+DouyinLiveWebFetcher/.git/
+DouyinLiveWebFetcher/.git_off/
+DouyinLiveWebFetcher/alipay.jpg
+
+# 调试临时产物
+debug_*.js
+debug_*.png
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

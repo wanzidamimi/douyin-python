@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>抖音弹幕实时显示 · 纯协议直连</title>
+<style>
+  :root { --bg:#0f1115; --panel:#181b21; --line:#2a2f39; --txt:#e6e8eb; --sub:#9aa3af; --accent:#fe2c55; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.5 "Microsoft YaHei",system-ui,sans-serif; }
+  header { padding:14px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  header h1 { font-size:17px; margin:0; }
+  .badge { font-size:12px; color:var(--sub); border:1px solid var(--line); border-radius:12px; padding:2px 10px; }
+  .bar { padding:14px 24px 8px; display:flex; gap:10px; }
+  input[type=text] { flex:1; min-width:220px; background:var(--panel); border:1px solid var(--line); color:var(--txt); border-radius:8px; padding:10px 14px; font-size:14px; }
+  button { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:10px 18px; cursor:pointer; font-size:14px; white-space:nowrap; }
+  button.ghost { background:var(--panel); color:var(--sub); border:1px solid var(--line); }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .filters { padding:6px 24px 12px; display:flex; align-items:center; gap:6px 14px; flex-wrap:wrap; border-bottom:1px solid var(--line); }
+  .filters .cap { color:var(--sub); font-size:12px; margin-right:2px; }
+  .filters label { display:inline-flex; align-items:center; gap:5px; cursor:pointer; font-size:13px; user-select:none; }
+  .filters input { accent-color:var(--accent); cursor:pointer; }
+  .dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
+  main { padding:12px 24px 24px; }
+  #list { height:calc(100vh - 208px); overflow-y:auto; background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:8px 0; }
+  .item { padding:7px 16px; border-bottom:1px solid #20242c; display:flex; gap:10px; align-items:baseline; }
+  .item .t { color:var(--sub); font-size:12px; white-space:nowrap; }
+  .item .x { word-break:break-all; flex:1; }
+  .item .cat { font-size:11px; border:1px solid var(--line); border-radius:10px; padding:0 8px; white-space:nowrap; }
+  .system .x { color:#63b3ff; } .warn .x { color:#f0a35e; } .error .x { color:#ff6b6b; }
+  .danmu .x { color:var(--txt); }
+  .empty { color:var(--sub); text-align:center; padding:40px; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.65); display:flex; align-items:center; justify-content:center; z-index:10; }
+  .hidden { display:none !important; }
+  .modal-box { width:min(760px,92vw); max-height:80vh; background:var(--panel); border:1px solid var(--line); border-radius:12px; display:flex; flex-direction:column; }
+  .modal-head { padding:14px 18px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
+  .modal-head h2 { font-size:16px; margin:0; }
+  .modal-body { padding:8px 18px 18px; overflow-y:auto; }
+  .hrow { display:flex; align-items:center; gap:12px; padding:10px 0; border-bottom:1px solid #20242c; }
+  .hrow .info { flex:1; min-width:0; }
+  .hrow .name { font-size:13px; word-break:break-all; }
+  .hrow .meta { color:var(--sub); font-size:12px; }
+  .dl { color:#63b3ff; text-decoration:none; border:1px solid var(--line); border-radius:6px; padding:4px 12px; font-size:13px; }
+  .dl:hover { border-color:#63b3ff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>抖音弹幕实时显示</h1>
+  <span class="badge">纯协议直连 · webmssdk 签名 · curl_cffi TLS</span>
+  <span class="badge" id="statusBadge">空闲</span>
+  <span class="badge" id="recBadge">已录制 0 条</span>
+</header>
+<div class="bar">
+  <input id="room" type="text" placeholder="输入直播地址，如 https://live.douyin.com/123456789 或纯数字房间号">
+  <button id="start">连接</button>
+  <button id="stop" class="ghost" disabled>停止</button>
+  <button id="export" class="ghost" disabled>导出CSV</button>
+  <button id="historyBtn" class="ghost">历史</button>
+</div>
+<div class="filters" id="filters"><span class="cap">显示类别</span></div>
+<main>
+  <div id="list"><div class="empty">连接后将在此实时滚动显示弹幕…</div></div>
+</main>
+<div id="historyPanel" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-head"><h2>历史弹幕（CSV）</h2><button class="ghost" id="historyClose">关闭</button></div>
+    <div class="modal-body" id="historyBody"></div>
+  </div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const list = $('list');
+let es = null, recorded = 0;
+const allowed = new Set();
+const CAT_META = {};
+
+function renderFilters(cats) {
+  const box = $('filters');
+  const all = document.createElement('label');
+  const allCb = document.createElement('input');
+  allCb.type = 'checkbox'; allCb.checked = true; allCb.id = 'catAll';
+  all.appendChild(allCb); all.appendChild(document.createTextNode('全选'));
+  box.appendChild(all);
+
+  cats.forEach(c => {
+    CAT_META[c.key] = c;
+    allowed.add(c.key);
+    const lab = document.createElement('label');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox'; cb.checked = true; cb.dataset.cat = c.key;
+    const dot = document.createElement('span');
+    dot.className = 'dot'; dot.style.background = c.color;
+    lab.appendChild(cb); lab.appendChild(dot); lab.appendChild(document.createTextNode(c.label));
+    box.appendChild(lab);
+    cb.addEventListener('change', () => {
+      cb.checked ? allowed.add(c.key) : allowed.delete(c.key);
+      allCb.checked = document.querySelectorAll('.filters input[data-cat]:checked').length === cats.length;
+      applyFilter();
+    });
+  });
+  allCb.addEventListener('change', () => {
+    document.querySelectorAll('.filters input[data-cat]').forEach(cb => {
+      cb.checked = allCb.checked;
+      cb.checked ? allowed.add(cb.dataset.cat) : allowed.delete(cb.dataset.cat);
+    });
+    applyFilter();
+  });
+}
+
+function applyFilter() {
+  list.querySelectorAll('.item.danmu').forEach(el => {
+    el.style.display = allowed.has(el.dataset.cat || 'other') ? '' : 'none';
+  });
+}
+
+function setUi(status) {
+  const busy = status === 'connecting' || status === 'connected';
+  $('start').disabled = busy; $('stop').disabled = !busy;
+  $('statusBadge').textContent = ({idle:'空闲', connecting:'连接中', connected:'已连接'})[status] || status;
+}
+
+function add(ev) {
+  if (ev.kind === 'system' && ev.text === '会话已结束') {
+    setUi('idle'); $('export').disabled = recorded === 0;
+  }
+  if (ev.kind === 'danmu') {
+    recorded++; $('recBadge').textContent = '已录制 ' + recorded + ' 条';
+    $('export').disabled = false;
+    if (!allowed.has(ev.category || 'other')) {
+      // 仍加入 DOM，但按筛选隐藏，切换筛选时可重现
+    }
+  }
+  const empty = list.querySelector('.empty'); if (empty) empty.remove();
+  const d = document.createElement('div');
+  d.className = 'item ' + (ev.kind || 'system');
+  if (ev.kind === 'danmu') d.dataset.cat = ev.category || 'other';
+
+  const t = document.createElement('span'); t.className = 't';
+  t.textContent = ev.ts || new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  d.appendChild(t);
+
+  if (ev.kind === 'danmu' && ev.category_label) {
+    const meta = CAT_META[ev.category] || {color:'#9aa3af'};
+    const b = document.createElement('span'); b.className = 'cat';
+    b.style.color = meta.color; b.style.borderColor = meta.color + '66';
+    b.textContent = ev.category_label;
+    d.appendChild(b);
+  }
+  const x = document.createElement('span'); x.className = 'x';
+  x.textContent = ev.text || JSON.stringify(ev);
+  d.appendChild(x);
+
+  if (ev.kind === 'danmu' && !allowed.has(d.dataset.cat)) d.style.display = 'none';
+  list.appendChild(d);
+  while (list.children.length > 500) list.removeChild(list.firstChild);
+  const atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 60;
+  if (atBottom && d.style.display !== 'none') list.scrollTop = list.scrollHeight;
+}
+
+async function loadHistory() {
+  const r = await fetch('/api/history');
+  const j = await r.json();
+  const box = $('historyBody'); box.innerHTML = '';
+  if (!j.files || !j.files.length) {
+    const e = document.createElement('div'); e.className = 'empty'; e.textContent = '暂无历史文件';
+    box.appendChild(e); return;
+  }
+  j.files.forEach(f => {
+    const row = document.createElement('div'); row.className = 'hrow';
+    const info = document.createElement('div'); info.className = 'info';
+    const name = document.createElement('div'); name.className = 'name'; name.textContent = f.name;
+    const meta = document.createElement('div'); meta.className = 'meta';
+    meta.textContent = `${f.rows} 条 · ${(f.size/1024).toFixed(1)} KB · ${f.mtime}`;
+    info.appendChild(name); info.appendChild(meta);
+    const a = document.createElement('a'); a.className = 'dl';
+    a.href = '/api/download/' + encodeURIComponent(f.name); a.textContent = '下载';
+    row.appendChild(info); row.appendChild(a); box.appendChild(row);
+  });
+}
+
+async function connectSSE() {
+  const r = await fetch('/api/categories');
+  const j = await r.json();
+  renderFilters(j.categories || []);
+  es = new EventSource('/api/events');
+  es.onmessage = e => { try { add(JSON.parse(e.data)); } catch(_){} };
+}
+
+$('start').onclick = async () => {
+  const room = $('room').value.trim();
+  if (!room) return alert('请输入直播地址');
+  const r = await fetch('/api/start', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({room})});
+  const j = await r.json();
+  if (!j.ok) return alert(j.error || '启动失败');
+  recorded = 0; $('recBadge').textContent = '已录制 0 条'; $('export').disabled = true;
+  setUi('connecting');
+  add({kind:'system', text:'已提交会话，等待握手…'});
+};
+$('stop').onclick = async () => {
+  await fetch('/api/stop', {method:'POST'});
+  setUi('idle');
+};
+$('export').onclick = async () => {
+  const r = await fetch('/api/export', {method:'POST'});
+  const j = await r.json();
+  if (j.ok) { add({kind:'system', text:`已导出 ${j.name}（${j.count} 条）`}); }
+  else alert(j.error || '导出失败');
+};
+$('historyBtn').onclick = () => { $('historyPanel').classList.remove('hidden'); loadHistory(); };
+$('historyClose').onclick = () => $('historyPanel').classList.add('hidden');
+$('historyPanel').onclick = e => { if (e.target === $('historyPanel')) $('historyPanel').classList.add('hidden'); };
+
+connectSSE();
+</script>
+</body>
+</html>
